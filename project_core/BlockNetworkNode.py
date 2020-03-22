@@ -8,10 +8,13 @@ Demonstrate the P2P communication among three nodes/terminals
 3.Query and receive the response of the timestamp a particular block
 
 Overall Behaviour:
-1. All network nodes query the whole network periodically.
-2. When a new peer joins, it will do the samme
-3. When a network node connects to a new peer it queries for allb blocks
-4. When a network node encounters a block that has an index larger than the current known block, it appends that block
+1. All network nodes run a single TCP server on a designated port (currently 4040).
+2. All network nodes query the whole network periodically to synchronise itself.
+3. When a new peer joins, it will send “queryall” to all other servers.
+4. When a network node encounters a block that has an index larger than the current known block,
+   it appends that block to its own blockchain as long as the index is just 1 more than its current last.
+5. Automatically learn of new IPs added to a network, and add that IP to its own list of known IP.
+
 
 Protocol details:
 Header:
@@ -31,8 +34,17 @@ getlatest:  get latest block on a node
 getblock:   get specific block on a node
 
 (for statuses)
-success:    used in response to inv, to retrieve the content of a specific object, and is usually sent after receiving an inv packet, after filtering known elements.
-notfound:   a response to a getdata, sent if any requested data items could not be relayed,
+success:    Used in response to any of the above 3 to indicate successful operation.
+notfound:  Used in response to any of the above 3 to indicate a block does not exist.
+
+Eg:
+Query:
+{command: “queryall”,
+data:[]}
+
+Response:
+{command: “success”,
+data:[Block0, Block1, Block2...]}
 
 Eg:
 Node 1                              Node 2
@@ -59,7 +71,6 @@ from .Block import Block
 import json
 import asyncio
 import logging
-import pickle
 
 DEFAULT_PORT = 4040
 #  Blockchain protocol headers
@@ -74,7 +85,8 @@ NOT_FOUND = "notfound"
 CLOSE_CONN = "byebye"
 
 # First block in the block chain
-GENESIS_BLOCK = Block(0, str(0),  datetime.timestamp(datetime.now()), "fidgetspinner")
+# GENESIS_BLOCK = Block(0, str(0),  datetime.timestamp(datetime.now()), "fidgetspinner")
+GENESIS_BLOCK = None
 
 """ General Purpose functions """
 
@@ -97,16 +109,6 @@ def _print_debug_info(writer, client_type: str, msg: str, rcv=True) -> None:
 def get_conn_info(writer: asyncio.StreamWriter) -> (str, str):
     """ own ip address and port, remote(incoming conn) ip address """
     return writer.get_extra_info("sockname"), writer.get_extra_info("peername")
-
-
-def save_to_file(name, data):
-    with open(name + ".txt", "wb") as fp:
-        pickle.dump(data, fp)
-
-
-def read_from_file(name):
-    with open(name + ".txt", "rb") as fp:
-        return pickle.load(fp)
 
 
 class ClientProtocol(asyncio.Protocol):
@@ -145,6 +147,8 @@ class ClientProtocol(asyncio.Protocol):
             pass
         elif incoming_cmd == SUCCESS:
             _print_debug_info(self.transport, "CLIENT", f"UPDATING OWN BLOCKCHAIN: {incoming_data}", rcv=True)
+            if self.command == GET_LATEST or self.command == GET_BLOCK:
+                print(f"[CLIENT] Received block(s) {incoming_data}")
             for block in incoming_data:
                 # if block index in current chain; ie its an existing block, update it
                 if (index := block[0]) < len(own_block_chain):
@@ -202,11 +206,9 @@ class ServerProtocol(asyncio.Protocol):
     def data_received(self, raw_data):
         """ Callback that exists in parent class for handling behaviour when data is received"""
         if data := json.loads(raw_data.decode("utf-8")):
-            # print(self.transport.get_extra_info("peername"), "RECEIVING SOMETHING")
-
             ret_data = self._server_handle_queries(cmd := data.get("command"), self._block_chain, data.get("data"))
             if cmd == GET_BLOCK or cmd == GET_LATEST:
-                print(f"{self.server_ip}'s response to {cmd}'s: {ret_data}")
+                print(f"[SERVER] {self.server_ip}'s response to {cmd}: {ret_data}")
             self.transport.write(ret_data.encode("utf-8"))
             self.transport.close()
 
@@ -274,7 +276,9 @@ class BlockNetworkNode:
         else:
             self.peer_list = set()
         if not block_chain:
-            self._block_chain = [GENESIS_BLOCK, ]  # block chain usually needs a genesis block
+            self._block_chain = [GENESIS_BLOCK, ] if GENESIS_BLOCK else []  # block chain usually needs a genesis block
+        else:
+            self._block_chain = block_chain
             # second block for testing
             # self._block_chain.append(Block.generate_next_block(self._block_chain, "fidgetcube"))
         self.server_ip = server_ip
@@ -331,7 +335,7 @@ class BlockNetworkNode:
 
     """ P2P client methods """
 
-    async def send_query(self, command: str, target_ip: str, target_port: int, index=None) -> None:
+    async def send_query(self, command: str, target_ip: str, target_port: int=DEFAULT_PORT, index=None) -> None:
         """ Top level coroutine mean to be used by users. Will craft and send a query to server target_ip:target_port"""
         loop = asyncio.get_running_loop()
         try:
@@ -359,7 +363,7 @@ class BlockNetworkNode:
                 del self._clients[index]
 
     async def behaviour(self, peer_list=None):
-        """ The general behavriour: on first connection it will query others, then periodically update itself"""
+        """ The general behaviour: on first connection it will query others, then periodically update itself"""
         logging.log(logging.INFO, f"{self.server_ip}'s CURRENT blockchain: {self.list_all_blocks_data()}")
         if peer_list:
             self._peer_list = set([peer for peer in peer_list if peer != (self.server_ip, self.server_port)])

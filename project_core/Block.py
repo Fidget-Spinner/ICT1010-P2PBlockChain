@@ -11,7 +11,6 @@ import hashlib
 class Block:
     def __init__(self, index: int, previous_hash: str, timestamp: float, data: str, own_hash: str = ""):
         """
-
         :param index: index of the current instance of the block
         :param previous_hash: value of the previous block's hash, 0 if genesis block
         :param timestamp: creation time of the block
@@ -69,6 +68,6 @@ class Block:
     @staticmethod
     def generate_next_block(blockchain: ["Block", ], data: str) -> "Block":
         """ Creates the next Block for an array of blocks, given data """
-        return Block(index=len(blockchain), previous_hash=blockchain[-1].own_hash, timestamp=datetime.timestamp(datetime.now()), data=data)
+        return Block(index=len(blockchain), previous_hash=blockchain[-1].own_hash if len(blockchain) > 0 else str(0), timestamp=datetime.timestamp(datetime.now()), data=data)
 
 
