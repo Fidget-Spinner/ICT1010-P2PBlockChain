@@ -65,7 +65,7 @@ Technical details:
 
 
 """
-from datetime import datetime
+from itertools import compress
 from .Block import Block
 
 import json
@@ -148,7 +148,7 @@ class ClientProtocol(asyncio.Protocol):
         elif incoming_cmd == SUCCESS:
             _print_debug_info(self.transport, "CLIENT", f"UPDATING OWN BLOCKCHAIN: {incoming_data}", rcv=True)
             if self.command == GET_LATEST or self.command == GET_BLOCK:
-                print(f"[CLIENT] Received block(s) {incoming_data}")
+                print(f"[CLIENT {self.transport.get_extra_info('sockname')[0]}] Received block(s) {incoming_data}")
             for block in incoming_data:
                 # if block index in current chain; ie its an existing block, update it
                 if (index := block[0]) < len(own_block_chain):
@@ -208,7 +208,7 @@ class ServerProtocol(asyncio.Protocol):
         if data := json.loads(raw_data.decode("utf-8")):
             ret_data = self._server_handle_queries(cmd := data.get("command"), self._block_chain, data.get("data"))
             if cmd == GET_BLOCK or cmd == GET_LATEST:
-                print(f"[SERVER] {self.server_ip}'s response to {cmd}: {ret_data}")
+                print(f"[SERVER {self.server_ip}] Response to {cmd}: {ret_data}")
             self.transport.write(ret_data.encode("utf-8"))
             self.transport.close()
 
@@ -306,8 +306,13 @@ class BlockNetworkNode:
 
     """ Block chain methods """
 
-    def add_block(self, data: str) -> None:
-        self._block_chain.append(Block.generate_next_block(self._block_chain, data))
+    def add_block(self, data: str = "", block: Block = None) -> None:
+        if data and block:
+            raise Exception("Data and block are mutually exclusive. Cannot have both at once.")
+        if data:
+            self._block_chain.append(Block.generate_next_block(self._block_chain, data))
+        if block:
+            self._block_chain.append(block)
 
     def delete_block(self, index: int) -> None:
         del self._block_chain[index:]  # deletes all blocks after block_chain since their hashes will be invalid
@@ -316,6 +321,12 @@ class BlockNetworkNode:
         if blockchain is [] or blockchain == "":
             blockchain = self._block_chain
         return [block.data for block in blockchain]
+
+    async def validate_block_chain(self) -> bool:
+        bad_blocks = list(compress(range(len(chain := self.block_chain)), [not block.validate_block() for block in chain]))
+        self._block_chain = self._block_chain[:bad_blocks[0] if bad_blocks else None]
+        print(f"Bad blocks: {bad_blocks or 'None'}")
+        return not all(bad_blocks)
 
     """ TCP P2P Methods """
     """ Data preparation methods """
@@ -355,6 +366,11 @@ class BlockNetworkNode:
             self.server_ip, self.server_port, start_serving=True)
         print(f"SET A SERVER {self.server_ip} UP")
         return self.server_instance
+
+    async def teardown(self):
+        """ Stop the server """
+        self.server_instance.close()
+        await self.server_instance.wait_closed()
 
     async def _remove_dead_clients(self):
         """ Removes inactive/closed clients from node's client list """

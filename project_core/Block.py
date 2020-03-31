@@ -70,4 +70,7 @@ class Block:
         """ Creates the next Block for an array of blocks, given data """
         return Block(index=len(blockchain), previous_hash=blockchain[-1].own_hash if len(blockchain) > 0 else str(0), timestamp=datetime.timestamp(datetime.now()), data=data)
 
-
+    def validate_block(self) -> bool:
+        """ Check validity of the current block's hash."""
+        #print(type(self._find_own_hash(self.index, self.previous_hash, self.timestamp, self.data)), type(self._own_hash))
+        return self._find_own_hash(self.index, self.previous_hash, self.timestamp, self.data) == self._own_hash
