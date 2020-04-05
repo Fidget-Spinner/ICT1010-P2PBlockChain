@@ -9,7 +9,8 @@ import platform
 
 
 if not (sys.version_info[0] == 3 and sys.version_info[1] >= 8):
-    assert False, "Must be using Python 3.8 or higher due to named expression operator ':=' usage and asyncio features"
+    print("Must be using Python 3.8 or higher due to named expression operator ':=' usage and asyncio features")
+    sys.exit(1)
 
 # overall script logging mode
 logging.basicConfig(level=logging.WARNING)
@@ -43,7 +44,15 @@ async def _graceful_shutdown(sig) -> None:
     print(f"Done!")
 
 
-async def _handle_node_todo(server_ip: str, node: BlockNetworkNode, do_things: dict, iterations: int):
+async def _handle_node_todo(server_ip: str, node: BlockNetworkNode, do_things: dict, iterations: int) -> int:
+    """ Handles what to do for the demo, given a certain set of commands.
+
+    :param server_ip: own BlockNetworkNode's server ip
+    :param node: own server's BlocKNetworkNode
+    :param do_things: dictionary of things you want the BlockNetworkNode to do, examples below
+    :param iterations: current iteration of the server, this is in conjunction with do_things
+    :return: error code (0 for no error, -1 for error)
+    """
     if things_list := do_things.get(iterations):
         for thing in things_list:
             thing = thing.split(":")
@@ -67,9 +76,17 @@ async def _handle_node_todo(server_ip: str, node: BlockNetworkNode, do_things: d
             elif "teardown" in case:
                 await node.teardown()
                 return -1
+    return 0
 
 
-async def poll_forever(server_ip: str, peer_list, do_things: dict, server_port=DEFAULT_PORT):
+async def poll_forever(server_ip: str, peer_list: [(str, int), ], do_things: dict, server_port=DEFAULT_PORT) -> None:
+    """ Poll forever (or until MAX_ITER is reached).
+
+    :param server_ip: own BlocKNetworkNode's server ip
+    :param peer_list: list of peers to pass to the server to learn, in format ("ip", port_no)
+    :param do_things: dictionary of things you want the BlockNetworkNode to do, examples below
+    :param server_port: port number to run the server on
+    """
     node = BlockNetworkNode(server_ip, server_port, peer_list=peer_list)
     server = await node.setup_server()
     iterations = 0
@@ -96,11 +113,11 @@ async def main():
         0: ["add:fidgetspinner"],  # Create genesis block
         4: ["add:fidgetcube"], # at Iter 2 add a new block with this data
         5: ["add:figetstick"],  # At iter 3, add a new block
-        6: ["teardown:teardown"]  # stop server
+        8: ["teardown:teardown"]  # stop server
     }
 
     todo2 = {
-        6: ["teardown:teardown"]
+        8: ["teardown:teardown"]
     }
     # For the third node added later on. To demonstrate that the other nodes have learnt of it and can update themselves
     todo1 = {
@@ -119,14 +136,12 @@ async def main():
     print("Adding a new node(127.0.0.1) to network")
     await poll_forever("127.0.0.1", peer_list, todo1)
     # Clean up
-    # test all 3 functionality
-
     await _graceful_shutdown(signal.SIGTERM)
 
 if __name__ == "__main__":
     if platform.system() == "Windows":
         # SelectorEventLoop was used by default in python 3.7,
-        # but the default changed to the more unstable ProactorEventLoop in python 3.8
+        # but the default changed to the more unstable(in windows) ProactorEventLoop in python 3.8
         asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
     loop = asyncio.get_event_loop()
     try:

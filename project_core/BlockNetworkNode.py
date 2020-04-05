@@ -65,12 +65,19 @@ Technical details:
 
 
 """
-from itertools import compress
 from .Block import Block
+from itertools import compress
 
-import json
 import asyncio
+import json
 import logging
+import sys
+
+# check for correct python version
+if not (sys.version_info[0] == 3 and sys.version_info[1] >= 8): # >= python 3.8
+    raise Exception(
+        "Must be using Python 3.8 or higher due to named expression operator ':=' usage and asyncio features"
+    )
 
 DEFAULT_PORT = 4040
 #  Blockchain protocol headers
@@ -126,7 +133,7 @@ class ClientProtocol(asyncio.Protocol):
     def connection_made(self, transport):
         """ Callback that exists in parent class for handling behaviour when a connection is established """
         # print(transport.get_extra_info("sockname"), "talking")
-        message = self._create_client_query(self.command, self.index)
+        message = BlockNetworkNode.pack_query(self.command, self.index)
         transport.write(message.encode("utf-8"))
         self.transport = transport
 
@@ -158,16 +165,6 @@ class ClientProtocol(asyncio.Protocol):
                     #logging.log(logging.INFO, f"APPENDING {block}")
                     own_block_chain.append(Block(*block))  # lengthen the blockchain
         return own_block_chain
-
-    @staticmethod
-    def _create_client_query(command: str, index=None) -> str:
-        """ Private helper for crafting client responses. Decides what to do from command.
-
-        :param command: one of GET_ALL, GET_LATEST, GET_BLOCK, SUCCESS, NOT_FOUND, CLOSE_CONN
-        :param index: optional, only required if the command is GET_BLOCK which queries a specific block or GET_LATEST
-        """
-        data = BlockNetworkNode.pack_query(command, index)
-        return data
 
 
 class ServerProtocol(asyncio.Protocol):
@@ -269,7 +266,6 @@ class BlockNetworkNode:
         self._clients = []  # list of tcp clients the current node has
         if peer_list:
             self.peer_list = set([peer for peer in peer_list if peer != (server_ip, server_port)][:])
-            #print("WTF", self.peer_list)
             logging.log(logging.INFO, f"{server_ip}'s peers: {self.peer_list}")
             print(f"{server_ip}'s peers: {self.peer_list}")
             # save_to_file(server_ip, peer_list)
@@ -318,14 +314,19 @@ class BlockNetworkNode:
         del self._block_chain[index:]  # deletes all blocks after block_chain since their hashes will be invalid
 
     def list_all_blocks_data(self, blockchain: ["Block", ] = "") -> list:
-        if blockchain is [] or blockchain == "":
-            blockchain = self._block_chain
+        blockchain = blockchain or self._block_chain
         return [block.data for block in blockchain]
 
     async def validate_block_chain(self) -> bool:
-        bad_blocks = list(compress(range(len(chain := self.block_chain)), [not block.validate_block() for block in chain]))
-        self._block_chain = self._block_chain[:bad_blocks[0] if bad_blocks else None]
-        print(f"Bad blocks: {bad_blocks or 'None'}")
+        bad_blocks = compress(range(len(chain := self.block_chain)), [not block.validate_block() for block in chain])
+        index = None
+        try:
+            # discarding everything after first bad block
+            index = next(bad_blocks)
+        except StopIteration:
+            pass
+        self._block_chain = self._block_chain[:index]
+        print(f"Bad blocks: {index or 'None'}")
         return not all(bad_blocks)
 
     """ TCP P2P Methods """
@@ -384,7 +385,7 @@ class BlockNetworkNode:
         if peer_list:
             self._peer_list = set([peer for peer in peer_list if peer != (self.server_ip, self.server_port)])
         else:
-            self._peer_list = ServerProtocol.peers.get(self.server_ip) if ServerProtocol.peers.get(self.server_ip) else self._peer_list
+            self._peer_list = ServerProtocol.peers.get(self.server_ip) or self._peer_list
         await asyncio.gather(*[self.send_query(GET_ALL, peer_ip, peer_port) for peer_ip, peer_port in self._peer_list])
         print(f"{self.server_ip}'s NEW blockchain: {self.list_all_blocks_data()}")
         await self._remove_dead_clients()
